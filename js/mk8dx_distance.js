@@ -1,17 +1,18 @@
 const OFFSET = 200; // Offset for projection on both X- and Z-axis
 const STARTING_LINE_SIZE = 120; // Starting line projection size
-const DRAG_MIN_DISTANCE = 100; // Distance from track when drag is effective
+const DRAG_MIN_DISTANCE = 100; // Distance from track when dragging cursor is effective
+const CURSORS_INIT_GAP = 840; // Gap between cursors at initialization
 let CURRENT_MAP = null; // Stores current map
 
 /**
- * Transform coordinates to adapt graphic projection.
+ * Adaptative function to transform coordinates in order to adapt graphic projection.
  */
-let transform = point => ({ x: point.x, y: point.y, z: point.z });
+let transform = null;
 
 /**
  * Undo previous transformation.
  */
-let untransform = point => ({ x: point.x, y: point.y, z: point.z });
+let untransform = null;
 
 /**
  * Calculate distance between two points.
@@ -162,9 +163,39 @@ function projectPoint(map, point, D3 = true) {
 			startPointIndex = i+1;
 			projectedPoint = projection;
 		}
+		// Point is already on the track
+		if(pointDistance == 0) {
+			break;
+		}
 	}
 
 	return { projectedPoint: projectedPoint, startPointIndex: startPointIndex, dist: minDistance };
+}
+
+/**
+ * Compute distance between two points on the track.
+ * 
+ * @param {Object} map A map.
+ * @param {Object}  p1 A point.
+ * @param {Object}  p2 Another point.
+ * 
+ * @returns The distance on the track between the two given points.
+ */
+function distanceOnTrack(map, p1, p2) {
+	let {projectedPoint, startPointIndex} = projectPoint(map, p1);
+	let {projectedPoint: projectedPoint2} = projectPoint(map, p2);
+
+	let dist = distance(projectedPoint, map.points[startPointIndex]);
+	
+	for(let i = (startPointIndex) % map.points.length, j = (startPointIndex+1) % map.points.length;; i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
+		let [_, p2Dist] = distancePointToSegment3D(p2, map.points[i], map.points[j]);
+		if(p2Dist < 1e-6) {
+			dist += distance(map.points[i], projectedPoint2);
+			return dist;
+		} else {
+			dist += distance(map.points[i], map.points[j]);
+		}
+	}
 }
 
 /**
@@ -185,7 +216,9 @@ function travel(map, origin, dist) {
 	let segment = [projectedPoint, map.points[startPointIndex]];
 
 	let travelledDistance = distance(projectedPoint, map.points[startPointIndex]);
-	for(let i = startPointIndex, j = startPointIndex+1; travelledDistance < dist; i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
+	for(let i = startPointIndex % map.points.length, j = (startPointIndex+1) % map.points.length; 
+			travelledDistance < dist; 
+			i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
 		let potentiallyTravelledDistance = distance(map.points[i], map.points[j]);
 		if(travelledDistance + potentiallyTravelledDistance > dist) {
 			let remainingDistanceToTravel = dist - travelledDistance;
@@ -205,12 +238,13 @@ function travel(map, origin, dist) {
 }
 
 /**
- * Draw a map (in 2D).
+ * Find extreme coordinates of map projection.
  * 
  * @param {Object} map A map.
+ *  
+ * @returns Extreme coordinates of map projection.
  */
-function drawMap(map) {
-	// Adapt transformation function for proper projection
+function findExtremeCoordinates(map) {
 	let minX = Number.MAX_SAFE_INTEGER;
 	let maxX = Number.MIN_SAFE_INTEGER;
 	let minZ = Number.MAX_SAFE_INTEGER;
@@ -229,20 +263,44 @@ function drawMap(map) {
 			maxZ = map.points[i].z;
 		}
 	}
-	transform = point => ({ x: (point.x - minX + OFFSET) / 2, y: point.y, z: (point.z - minZ + OFFSET) / 2 });
-	untransform = point => ({ x: point.x*2 - OFFSET + minX, y: point.y, z: point.z*2 - OFFSET + minZ});
+	return { minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ };
+}
+
+/**
+ * Compute projection functions for a map.
+ * The projection translates the whole map such that
+ * 1) it is of reasonable size ;
+ * 2) it doesn't go off screen.
+ * 
+ * @param {Object}  map A map.
+ * @param {number} minX Extreme lower bound on X-axis.
+ * @param {number} minZ Extreme lower bound on Z-axis.
+ */
+function computeProjectionFunctions(minX, minZ) {
+	transform = point => ({ x: (point.x - minX + OFFSET) / 8, y: point.y, z: (point.z - minZ + OFFSET) / 8 });
+	untransform = point => ({ x: point.x*8 - OFFSET + minX, y: point.y, z: point.z*8 - OFFSET + minZ});
+}
+
+/**
+ * Draw a map (in 2D).
+ * 
+ * @param {Object} map A map.
+ */
+function drawMap(map) {
+	let {minX, maxX, minZ, maxZ} = findExtremeCoordinates(map);
+	computeProjectionFunctions(minX, minZ);
 
 	// Adapt canvas size
 	let canvas = document.getElementById('map');
 	let canvasHighlights = document.getElementById('highlights');
-	canvas.width = canvasHighlights.width = (maxX - minX + OFFSET + 100) / 2;
-	canvas.height = canvasHighlights.height = (maxZ - minZ + OFFSET + 100) / 2;
+	canvas.width = canvasHighlights.width = (maxX - minX + OFFSET + 100) / 8;
+	canvas.height = canvasHighlights.height = (maxZ - minZ + OFFSET + 100) / 8;
 
 	// Draw map
 	let context = canvas.getContext('2d');
 	context.reset();
 	context.strokeStyle = 'black';
-	context.lineWidth = 12;
+	context.lineWidth = 4;
 
 	context.beginPath();
 	let p0 = transform(map.points[0]);
@@ -325,12 +383,47 @@ function createCursors(map) {
 	let p1Div = document.getElementById('p1'); // 1st 
 	let p2Div = document.getElementById('p2'); // Other player
 	
-	let segment = travel(map, map.points[0], 840);
+	let segment = travel(map, map.points[0], CURSORS_INIT_GAP);
 	let p1 = transform(segment[0]);
 	let p2 = transform(segment[segment.length - 1]);
+	p1Div.point = segment[0];
+	p2Div.point = segment[segment.length - 1];
 
 	createCursor(map, p1Div, p1);
 	createCursor(map, p2Div, p2);
+
+	let distDiv = document.getElementById("dist");
+	distDiv.value = `${CURSORS_INIT_GAP}`;
+}
+
+/**
+ * Fix 2D projection to get proper 3D projection.
+ * WARNING : only a partial solution as it can't properly handle overlaping sections.
+ * 
+ * @param {Object}            map A map.
+ * @param {Object} malformedPoint The point to fix.
+ * @param {number}      nextIndex The index of the next point in the map.
+ * 
+ * @returns The fixed projection in 3D.
+ */
+function fixProjection(map, malformedPoint, nextIndex) {
+	let start = map.points[nextIndex == 0 ? map.points.length-1 : nextIndex-1];
+	let end = map.points[nextIndex];
+	const t = (malformedPoint.x - start.x) / (end.x - start.x);
+	const interpolatedY = start.y + t * (end.y - start.y);
+	return { x: malformedPoint.x, y: interpolatedY, z: malformedPoint.z };
+}
+
+/**
+ * Updates displayed distance according to current distance between cursors.
+ * 
+ * @param {Object} map A map.
+ */
+function updateDistance(map) {
+	let distDiv = document.getElementById("dist");
+	let p1 = document.getElementById('p1').point;
+	let p2 = document.getElementById('p2').point;
+	distDiv.value = `${distanceOnTrack(map, p1, p2)}`;
 }
 
 /**
@@ -347,12 +440,14 @@ function createCursor(map, div, point) {
 	div.ondragend = function(e) {
 		let mousePos = { x: e.clientX, y: 0, z: e.clientY }; // Dummy y as not relevant here
 		let unprojectedMousePos = untransform(mousePos);
-		let {projectedPoint, dist} = projectPoint(map, unprojectedMousePos, D3 = false);
+		let {projectedPoint, startPointIndex, dist} = projectPoint(map, unprojectedMousePos, D3 = false);
 		if(dist <= DRAG_MIN_DISTANCE) {
-			let projectedClosest = transform(projectedPoint);
+			let fixedPoint = fixProjection(map, projectedPoint, startPointIndex);
+			div.point = fixedPoint;
+			let projectedClosest = transform(fixedPoint);
 			div.style.left = `${projectedClosest.x - div.offsetWidth/2}px`;
 			div.style.top = `${projectedClosest.z - div.offsetHeight/2}px`;
-			// TODO : logique de calcul de distance
+			updateDistance(map);
 		}
 	};
 }
