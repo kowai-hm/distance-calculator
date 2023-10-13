@@ -4,13 +4,29 @@
   <title>MK8DX Distance Calculator</title>
   <script src="js/tracks.js"></script>
   <script src="js/mk8dx_distance.js"></script>
+  <style>
+	canvas {
+		position: absolute; 
+		top: 0; 
+		left: 0;
+	}
+	#p1, #p2 {
+		position: absolute;
+		width: 65px;
+		height: 65px;
+		border-radius: 50%;
+	}
+	#p1 {background-color: grey;}
+	#p2 {background-color: gold;}
+  </style>
 </head>
 <body>
-	<canvas id="map" width="4000" height="4000" style="position: absolute; top: 0; left: 0;"></canvas>
-	<canvas id="highlights" width="4000" height="4000" style="position: absolute; top: 0; left: 0;"></canvas>
-
+	<canvas id="map"></canvas>
+	<canvas id="highlights"></canvas>
+	<div id="p1"></div>
+	<div id="p2"></div>
 	<script>
-		drawMap(EXCITEBIKE);
+		init();
 	</script>
 </body>
 </html>
