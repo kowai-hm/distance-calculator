@@ -1,4 +1,6 @@
-let OFFSET = 200; // Offset for projection on both X- and Z-axis
+const OFFSET = 200; // Offset for projection on both X- and Z-axis
+const STARTING_LINE_SIZE = 120; // Starting line projection size
+const DRAG_MIN_DISTANCE = 100; // Distance from track when drag is effective
 let CURRENT_MAP = null; // Stores current map
 
 /**
@@ -26,7 +28,7 @@ let distance = (p1, p2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - 
  */
 function init(map = RACEWAY) {
 	drawMap(map);
-	createPoints(map);
+	createCursors(map);
 }
 
 /**
@@ -49,7 +51,7 @@ function rotatePoint(point, center, angle) {
 }
 
 /**
- * Compute (minimal) distance from a point to a segment and projection.
+ * Compute (minimal) distance from a point to a segment and projection (assuming a 2D system).
  * If there is no straight line perpendicularly intersecting the segment passing through the point, 
  * the projection is one of the two ends.
  * 
@@ -59,7 +61,51 @@ function rotatePoint(point, center, angle) {
  * 
  * @returns The projected point and the distance from the point to the segment.
  */
-function distancePointToSegment(point, segmentStart, segmentEnd) {
+function distancePointToSegment2D(point, segmentStart, segmentEnd) {
+    const V = {
+        x: point.x - segmentStart.x,
+        z: point.z - segmentStart.z
+    };
+    const D = {
+        x: segmentEnd.x - segmentStart.x,
+        z: segmentEnd.z - segmentStart.z
+    };
+
+    const DD = D.x * D.x + D.z * D.z;
+    if (DD < 1e-6) {
+        return Math.sqrt(V.x * V.x + V.z * V.z);
+    }
+
+    const t = (V.x * D.x + V.z * D.z) / DD;
+    if (t < 0) {
+        return [segmentStart, Math.sqrt(V.x * V.x + V.z * V.z)];
+    } else if (t > 1) {
+        const x = point.x - segmentEnd.x;
+        const z = point.z - segmentEnd.z;
+        return [segmentEnd, Math.sqrt(x * x + z * z)];
+    }
+
+    const projection = {
+        x: segmentStart.x + t * D.x,
+		y: point.y, // y is not relevant in 2D
+        z: segmentStart.z + t * D.z
+    };
+
+    return [projection, distance(projection, point)];
+}
+
+/**
+ * Compute (minimal) distance from a point to a segment and projection (assuming a 3D system).
+ * If there is no straight line perpendicularly intersecting the segment passing through the point, 
+ * the projection is one of the two ends.
+ * 
+ * @param {Object}        point The point.
+ * @param {Object} segmentStart The start point of the segment.
+ * @param {Object}   segmentEnd The end point of the segment.
+ * 
+ * @returns The projected point and the distance from the point to the segment.
+ */
+function distancePointToSegment3D(point, segmentStart, segmentEnd) {
     const V = {
         x: point.x - segmentStart.x,
         y: point.y - segmentStart.y,
@@ -96,6 +142,32 @@ function distancePointToSegment(point, segmentStart, segmentEnd) {
 }
 
 /**
+ * Project a point on the closest location of the currently displayed track.
+ * 
+ * @param {Object}   map A map.
+ * @param {Object} point A point.
+ * @param {boolean}   D3 Using a 3D or 2D projection.
+ * 
+ * @returns The resulting projection, the index of the next point in the track and the minimal distance found.
+ */
+function projectPoint(map, point, D3 = true) {
+	let startPointIndex = -1;
+
+	let minDistance = Number.MAX_SAFE_INTEGER;
+	let projectedPoint = null;
+	for(let i = 0; i < map.points.length-1; i++) {
+		let [projection, pointDistance] = D3 ? distancePointToSegment3D(point, map.points[i], map.points[i+1]) : distancePointToSegment2D(point, map.points[i], map.points[i+1]);
+		if(pointDistance < minDistance) {
+			minDistance = pointDistance;
+			startPointIndex = i+1;
+			projectedPoint = projection;
+		}
+	}
+
+	return { projectedPoint: projectedPoint, startPointIndex: startPointIndex, dist: minDistance };
+}
+
+/**
  * Isolate segment of track from a start point by travelling on the track by given distance.
  * If the start point is not on the track, it is projected.
  * 
@@ -107,23 +179,12 @@ function distancePointToSegment(point, segmentStart, segmentEnd) {
  */
 function travel(map, origin, dist) {
 	// Find starting segment by projecting point
-	let startPointIndex = -1;
-	
-	let minDistance = Number.MAX_SAFE_INTEGER;
-	let projectedOrigin = null;
-	for(let i = 0; i < map.points.length-1; i++) {
-		let [projection, originDistance] = distancePointToSegment(origin, map.points[i], map.points[i+1]);
-		if(originDistance < minDistance) {
-			minDistance = originDistance;
-			startPointIndex = i+1;
-			projectedOrigin = projection;
-		}
-	}
+	let {projectedPoint, startPointIndex} = projectPoint(map, origin);
 
 	// Compute distance
-	let segment = [projectedOrigin, map.points[startPointIndex]];
+	let segment = [projectedPoint, map.points[startPointIndex]];
 
-	let travelledDistance = distance(projectedOrigin, map.points[startPointIndex]);
+	let travelledDistance = distance(projectedPoint, map.points[startPointIndex]);
 	for(let i = startPointIndex, j = startPointIndex+1; travelledDistance < dist; i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
 		let potentiallyTravelledDistance = distance(map.points[i], map.points[j]);
 		if(travelledDistance + potentiallyTravelledDistance > dist) {
@@ -169,7 +230,7 @@ function drawMap(map) {
 		}
 	}
 	transform = point => ({ x: (point.x - minX + OFFSET) / 2, y: point.y, z: (point.z - minZ + OFFSET) / 2 });
-	untransform = point => ({ x: x*2 - OFFSET + minX, y: point.y, z: z*2 - OFFSET + minZ});
+	untransform = point => ({ x: point.x*2 - OFFSET + minX, y: point.y, z: point.z*2 - OFFSET + minZ});
 
 	// Adapt canvas size
 	let canvas = document.getElementById('map');
@@ -205,8 +266,8 @@ function drawMap(map) {
 	// Normalize starting line size
 	let slStartVector = { x: slStart.x - map.points[0].x, z: slStart.z - map.points[0].z };
 	let slEndVector = { x: slEnd.x - map.points[0].x, z: slEnd.z - map.points[0].z };
-	// Same maths as for travel ; 120 is arbitrary
-	let factor = 120 / Math.sqrt(Math.pow(slStartVector.x, 2) + Math.pow(slStartVector.z, 2));
+	// Same maths as for travel
+	let factor = STARTING_LINE_SIZE / Math.sqrt(Math.pow(slStartVector.x, 2) + Math.pow(slStartVector.z, 2));
 	slStart = { x: map.points[0].x + factor * slStartVector.x, z: map.points[0].z + factor * slStartVector.z };
 	slEnd = { x: map.points[0].x + factor * slEndVector.x, z: map.points[0].z + factor * slEndVector.z };
 	let transformedSlStart = transform(slStart);
@@ -260,18 +321,38 @@ function highlightDistanceFromStart(dist) {
  * 
  * @param {Object} map A map. 
  */
-function createPoints(map) {
+function createCursors(map) {
+	let p1Div = document.getElementById('p1'); // 1st 
+	let p2Div = document.getElementById('p2'); // Other player
+	
 	let segment = travel(map, map.points[0], 840);
-
-	// First point at start
-	let p1Div = document.getElementById('p1');
 	let p1 = transform(segment[0]);
-    p1Div.style.top = `${p1.z - p1Div.clientHeight/2}px`;
-	p1Div.style.left = `${p1.x - p1Div.clientWidth/2}px`;
-
-	// Second point a bit further
-	let p2Div = document.getElementById('p2');
 	let p2 = transform(segment[segment.length - 1]);
-	p2Div.style.top = `${p2.z - p2Div.clientHeight/2}px`;
-	p2Div.style.left = `${p2.x - p2Div.clientWidth/2}px`;
+
+	createCursor(map, p1Div, p1);
+	createCursor(map, p2Div, p2);
+}
+
+/**
+ * Create cursor which represent a player on the track.
+ * 
+ * @param {Object}   map A map.
+ * @param {Object}   div The HTML object of the cursor.
+ * @param {Object} point The (projected) initial position.
+ */
+function createCursor(map, div, point) {
+	div.draggable = true;
+	div.style.left = `${point.x - div.offsetWidth/2}px`;
+	div.style.top = `${point.z - div.offsetHeight/2}px`;
+	div.ondragend = function(e) {
+		let mousePos = { x: e.clientX, y: 0, z: e.clientY }; // Dummy y as not relevant here
+		let unprojectedMousePos = untransform(mousePos);
+		let {projectedPoint, dist} = projectPoint(map, unprojectedMousePos, D3 = false);
+		if(dist <= DRAG_MIN_DISTANCE) {
+			let projectedClosest = transform(projectedPoint);
+			div.style.left = `${projectedClosest.x - div.offsetWidth/2}px`;
+			div.style.top = `${projectedClosest.z - div.offsetHeight/2}px`;
+			// TODO : logique de calcul de distance
+		}
+	};
 }
