@@ -1,7 +1,3 @@
-const OFFSET = 200; // Offset for projection on both X- and Z-axis
-const STARTING_LINE_SIZE = 120; // Starting line projection size
-const DRAG_MIN_DISTANCE = 100; // Distance from track when dragging cursor is effective
-const CURSORS_INIT_GAP = 840; // Gap between cursors at initialization
 let CURRENT_MAP = null; // Stores current map
 
 /**
@@ -30,6 +26,7 @@ let distance = (p1, p2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - 
 function init(map = RACEWAY) {
 	drawMap(map);
 	createCursors(map);
+	connectDistanceField(map);
 }
 
 /**
@@ -173,6 +170,24 @@ function projectPoint(map, point, D3 = true) {
 }
 
 /**
+ * Fix 2D projection to get proper 3D projection.
+ * WARNING : only a partial solution as it can't properly handle overlaping sections.
+ * 
+ * @param {Object}            map A map.
+ * @param {Object} malformedPoint The point to fix.
+ * @param {number}      nextIndex The index of the next point in the map.
+ * 
+ * @returns The fixed projection in 3D.
+ */
+function fixProjection(map, malformedPoint, nextIndex) {
+	let start = map.points[nextIndex == 0 ? map.points.length-1 : nextIndex-1];
+	let end = map.points[nextIndex];
+	const t = (malformedPoint.x - start.x) / (end.x - start.x);
+	const interpolatedY = start.y + t * (end.y - start.y);
+	return { x: malformedPoint.x, y: interpolatedY, z: malformedPoint.z };
+}
+
+/**
  * Compute distance between two points on the track.
  * 
  * @param {Object} map A map.
@@ -183,50 +198,77 @@ function projectPoint(map, point, D3 = true) {
  */
 function distanceOnTrack(map, p1, p2) {
 	let {projectedPoint, startPointIndex} = projectPoint(map, p1);
-	let {projectedPoint: projectedPoint2} = projectPoint(map, p2);
+	let {projectedPoint: projectedPoint2, startPointIndex: startPointIndex2} = projectPoint(map, p2);
 
-	let dist = distance(projectedPoint, map.points[startPointIndex]);
+	if(startPointIndex == startPointIndex2) {
+		return distance(projectedPoint, projectedPoint2);
+	}
 	
-	for(let i = (startPointIndex) % map.points.length, j = (startPointIndex+1) % map.points.length;; i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
-		let [_, p2Dist] = distancePointToSegment3D(p2, map.points[i], map.points[j]);
-		if(p2Dist < 1e-6) {
+	let dist = distance(projectedPoint, map.points[startPointIndex]);
+	for(let i = (startPointIndex) % map.points.length, j = (startPointIndex+1) % map.points.length;; 
+			i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
+		if(j != startPointIndex2) {
+			dist += distance(map.points[i], map.points[j]);
+		} else {
 			dist += distance(map.points[i], projectedPoint2);
 			return dist;
-		} else {
-			dist += distance(map.points[i], map.points[j]);
 		}
 	}
+}
+
+/**
+ * Translate a point on a segment (more precisely, by using a segment as translation vector) by a given distance.
+ * 
+ * @param {Object} point The point to translate.
+ * @param {Object}    p1 The first bound of the segment.
+ * @param {Object}    p2 The second bound of the segment.
+ * @param {number}  dist Distance of translation.
+ */
+function translate(point, p1, p2, dist) {
+	let translationVector = { x: p2.x - p1.x, y: p2.y - p1.y, z: p2.z - p1.z };
+	// See figure for more details about factor equation
+	let factor = dist / Math.sqrt(Math.pow(translationVector.x, 2) + Math.pow(translationVector.y, 2) + Math.pow(translationVector.z, 2));
+	let finalPoint = { x: point.x + translationVector.x * factor, y: point.y + translationVector.y * factor, z: point.z + translationVector.z * factor };
+	return finalPoint;
 }
 
 /**
  * Isolate segment of track from a start point by travelling on the track by given distance.
  * If the start point is not on the track, it is projected.
  * 
- * @param {Object}    map A map.
- * @param {Object} origin The starting point.
- * @param {number}   dist The distance to travel.
+ * @param {Object}      map A map.
+ * @param {Object}   origin The starting point.
+ * @param {number}     dist The distance to travel.
+ * @param {boolean} reverse Direction of the travel.
  * 
  * @returns The points which make up the segment of track.
  */
-function travel(map, origin, dist) {
+function travel(map, origin, dist, reverse = false) {
 	// Find starting segment by projecting point
 	let {projectedPoint, startPointIndex} = projectPoint(map, origin);
+	let segment = [projectedPoint];
+	if(dist == 0) {
+		return segment;
+	}
+	if(reverse) {
+		startPointIndex = (startPointIndex - 1) % map.points.length;
+	}
 
 	// Compute distance
-	let segment = [projectedPoint, map.points[startPointIndex]];
-
 	let travelledDistance = distance(projectedPoint, map.points[startPointIndex]);
-	for(let i = startPointIndex % map.points.length, j = (startPointIndex+1) % map.points.length; 
+	if(travelledDistance > dist) {
+		segment.push(translate(projectedPoint, projectedPoint, map.points[startPointIndex], dist));
+		return segment;
+	}
+	for(let i = startPointIndex % map.points.length, j = (!reverse ? startPointIndex+1 : startPointIndex-1) % map.points.length; 
 			travelledDistance < dist; 
-			i = (i+1) % map.points.length, j = (j+1) % map.points.length) {
+			i = (!reverse ? i+1 : i-1) % map.points.length, j = (!reverse ? j+1 : j-1) % map.points.length) {
+		if(i == -1) {i = map.points.length - 1;}
+		if(j == -1) {j = map.points.length - 1;}
 		let potentiallyTravelledDistance = distance(map.points[i], map.points[j]);
 		if(travelledDistance + potentiallyTravelledDistance > dist) {
 			let remainingDistanceToTravel = dist - travelledDistance;
-			let translationVector = { x: map.points[j].x - map.points[i].x, y: map.points[j].y - map.points[i].y, z: map.points[j].z - map.points[i].z };
-			// See figure for more details about factor equation
-			let factor = remainingDistanceToTravel / Math.sqrt(Math.pow(translationVector.x, 2) + Math.pow(translationVector.y, 2) + Math.pow(translationVector.z, 2));
-			let finalPoint = { x: map.points[i].x + translationVector.x * factor, y: map.points[i].y + translationVector.y * factor, z: map.points[i].z + translationVector.z * factor };
-			segment.push(finalPoint);
+			segment.push(translate(map.points[i], map.points[i], map.points[j], remainingDistanceToTravel));
 			travelledDistance += remainingDistanceToTravel;
 		} else {
 			segment.push(map.points[j]);
@@ -340,41 +382,6 @@ function drawMap(map) {
 }
 
 /**
- * Highlight distance from a given point, using the current track.
- * 
- * @param {Object} map    The current track.
- * @param {Object} origin The origin point.
- * @param {number} dist   The distance to highlight from given origin point.
- */
-function highlightDistance(map, origin, dist) {		
-	let canvas = document.getElementById('highlights');
-	let context = canvas.getContext('2d');
-	context.reset();
-	context.strokeStyle = 'red';
-	context.lineWidth = 12;
-
-	context.beginPath();
-	let segment = travel(map, origin, dist);
-	let transformedSegmentOrigin = transform(segment[0]);
-	context.moveTo(transformedSegmentOrigin.x, transformedSegmentOrigin.z);
-	for(let i = 1; i < segment.length; i++) {
-		let p = transform(segment[i]);
-		context.lineTo(p.x, p.z);
-	}
-	context.stroke();
-	context.closePath();
-}
-
-/**
- * Highlight distance from start of map.
- * 
- * @param {number} dist The distance to highlight from start of map.
- */
-function highlightDistanceFromStart(dist) {
-	highlightDistance(CURRENT_MAP, CURRENT_MAP.points[0], dist);
-}
-
-/**
  * Create cursors which represent players on the track.
  * 
  * @param {Object} map A map. 
@@ -394,36 +401,6 @@ function createCursors(map) {
 
 	let distDiv = document.getElementById("dist");
 	distDiv.value = `${CURSORS_INIT_GAP}`;
-}
-
-/**
- * Fix 2D projection to get proper 3D projection.
- * WARNING : only a partial solution as it can't properly handle overlaping sections.
- * 
- * @param {Object}            map A map.
- * @param {Object} malformedPoint The point to fix.
- * @param {number}      nextIndex The index of the next point in the map.
- * 
- * @returns The fixed projection in 3D.
- */
-function fixProjection(map, malformedPoint, nextIndex) {
-	let start = map.points[nextIndex == 0 ? map.points.length-1 : nextIndex-1];
-	let end = map.points[nextIndex];
-	const t = (malformedPoint.x - start.x) / (end.x - start.x);
-	const interpolatedY = start.y + t * (end.y - start.y);
-	return { x: malformedPoint.x, y: interpolatedY, z: malformedPoint.z };
-}
-
-/**
- * Updates displayed distance according to current distance between cursors.
- * 
- * @param {Object} map A map.
- */
-function updateDistance(map) {
-	let distDiv = document.getElementById("dist");
-	let p1 = document.getElementById('p1').point;
-	let p2 = document.getElementById('p2').point;
-	distDiv.value = `${distanceOnTrack(map, p1, p2)}`;
 }
 
 /**
@@ -447,7 +424,108 @@ function createCursor(map, div, point) {
 			let projectedClosest = transform(fixedPoint);
 			div.style.left = `${projectedClosest.x - div.offsetWidth/2}px`;
 			div.style.top = `${projectedClosest.z - div.offsetHeight/2}px`;
-			updateDistance(map);
+			let gap = updateDistance(map);
+			highlightShockDistances(map, gap);
 		}
+	};
+}
+
+/**
+ * Compute and update distance according to current distance between cursors.
+ * 
+ * @param {Object} map A map.
+ */
+function updateDistance(map) {
+	let distDiv = document.getElementById("dist");
+	let p1 = document.getElementById('p1').point;
+	let p2 = document.getElementById('p2').point;
+	let dist = distanceOnTrack(map, p1, p2);
+	distDiv.value = `${dist}`;
+	return dist;
+}
+
+/**
+ * Highlight shock distances between cursors.
+ * 
+ * @param {Object} map A map.
+ * @param {number} gap The distance between the two cursors.
+ */
+function highlightShockDistances(map, gap) {
+	let canvas = document.getElementById('highlights');
+	let context = canvas.getContext('2d');
+	context.reset();
+
+	let p = document.getElementById('p2').point;
+	let prevTraveled = 0;
+	for(let dist in SHOCK_DISTANCES) {
+		dist = parseInt(dist);
+		if(dist < gap) {
+			p = highlightDistance(map, p, dist - prevTraveled, reverse = true, color = SHOCK_DISTANCES[dist].color);
+			prevTraveled = dist;
+		} else {
+			console.log(dist);
+			highlightDistance(map, p, gap - prevTraveled, reverse = true, color = SHOCK_DISTANCES[dist].color);
+			return;
+		}
+	}
+}
+
+/**
+ * Highlight distance from a given point, using a track.
+ * 
+ * @param {Object}      map The current track.
+ * @param {Object}   origin The origin point.
+ * @param {number}     dist The distance to highlight from given origin point.
+ * @param {boolean} reverse Direction of the travel.
+ * @param {string}    color The color of the highlight.
+ * 
+ * @returns The point at the given distance from the origin on the track.
+ */
+function highlightDistance(map, origin, dist, reverse = false, color = 'red') {		
+	let canvas = document.getElementById('highlights');
+	let context = canvas.getContext('2d');
+	context.strokeStyle = color;
+	context.lineWidth = 12;
+
+	context.beginPath();
+	let segment = travel(map, origin, dist, reverse);
+	let transformedSegmentOrigin = transform(segment[0]);
+	context.moveTo(transformedSegmentOrigin.x, transformedSegmentOrigin.z);
+	for(let i = 1; i < segment.length; i++) {
+		let p = transform(segment[i]);
+		context.lineTo(p.x, p.z);
+	}
+	context.stroke();
+	context.closePath();
+
+	return segment[segment.length - 1];
+}
+
+/**
+ * Highlight distance from start of map.
+ * 
+ * @param {number} dist The distance to highlight from start of map.
+ */
+function highlightDistanceFromStart(map, dist) {
+	highlightDistance(map, map.points[0], dist);
+}
+
+/**
+ * Gives the distance HTML field the ability to move cursors when changed.
+ * 
+ * @param {Object} map A map.
+ */
+function connectDistanceField(map) {
+	let p2 = document.getElementById('p2').point;
+	let p1Div = document.getElementById('p1');
+	let distDiv = document.getElementById("dist");
+	distDiv.onchange = function() {
+		let dist = parseFloat(distDiv.value);
+		let segment = travel(map, p2, dist, reverse = true);
+		p1Div.point = segment[segment.length - 1];
+		let projectedP1 = transform(p1Div.point);
+		p1Div.style.left = `${projectedP1.x - p1Div.offsetWidth/2}px`;
+		p1Div.style.top = `${projectedP1.z - p1Div.offsetHeight/2}px`;
+		highlightShockDistances(map, distanceOnTrack(map, p1Div.point, p2));
 	};
 }
