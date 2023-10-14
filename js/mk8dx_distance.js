@@ -26,6 +26,7 @@ let distance = (p1, p2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - 
 function init(map = RACEWAY) {
 	drawMap(map);
 	createCursors(map);
+	createItemBoxes(map);
 	connectDistanceField(map);
 	highlightShockDistances(map, CURSORS_INIT_GAP);
 }
@@ -392,10 +393,8 @@ function createCursors(map) {
 	let p2Div = document.getElementById('p2'); // Other player
 	
 	let segment = travel(map, map.points[0], CURSORS_INIT_GAP);
-	let p1 = transform(segment[0]);
-	let p2 = transform(segment[segment.length - 1]);
-	p1Div.point = segment[0];
-	p2Div.point = segment[segment.length - 1];
+	let p1 = segment[0];
+	let p2 = segment[segment.length - 1];
 
 	createCursor(map, p1Div, p1);
 	createCursor(map, p2Div, p2);
@@ -413,8 +412,8 @@ function createCursors(map) {
  */
 function createCursor(map, div, point) {
 	div.draggable = true;
-	div.style.left = `${point.x - div.offsetWidth/2}px`;
-	div.style.top = `${point.z - div.offsetHeight/2}px`;
+	div.point = point;
+	updatePosition(div);
 	div.ondragend = function(e) {
 		let mousePos = { x: e.clientX, y: 0, z: e.clientY }; // Dummy y as not relevant here
 		let unprojectedMousePos = untransform(mousePos);
@@ -422,13 +421,22 @@ function createCursor(map, div, point) {
 		if(dist <= DRAG_MIN_DISTANCE) {
 			let fixedPoint = fixProjection(map, projectedPoint, startPointIndex);
 			div.point = fixedPoint;
-			let projectedClosest = transform(fixedPoint);
-			div.style.left = `${projectedClosest.x - div.offsetWidth/2}px`;
-			div.style.top = `${projectedClosest.z - div.offsetHeight/2}px`;
+			updatePosition(div);
 			let gap = updateDistance(map);
 			highlightShockDistances(map, gap);
 		}
 	};
+}
+
+/**
+ * Update cursor/item box representation's position using position in track.
+ * 
+ * @param {HTMLDivElement} cursorDiv The HTML representation of the cursor.
+ */
+function updatePosition(cursorDiv) {
+	let transformed = transform(cursorDiv.point);
+	cursorDiv.style.left = `${transformed.x - cursorDiv.offsetWidth/2}px`;
+	cursorDiv.style.top = `${transformed.z - cursorDiv.offsetHeight/2}px`;
 }
 
 /**
@@ -524,9 +532,31 @@ function connectDistanceField(map) {
 		let dist = parseFloat(distDiv.value);
 		let segment = travel(map, p2, dist, reverse = true);
 		p1Div.point = segment[segment.length - 1];
-		let projectedP1 = transform(p1Div.point);
-		p1Div.style.left = `${projectedP1.x - p1Div.offsetWidth/2}px`;
-		p1Div.style.top = `${projectedP1.z - p1Div.offsetHeight/2}px`;
+		updatePosition(p1Div);
 		highlightShockDistances(map, distanceOnTrack(map, p1Div.point, p2));
 	};
+}
+
+/**
+ * Place graphically item boxes of a map.
+ * 
+ * @param {Object} map A map. 
+ */
+function createItemBoxes(map) {
+	for(let i = 0; i < map.boxes.length; i++) {
+		let boxDiv = document.createElement("div");
+		boxDiv.id = i;
+		boxDiv.className = "box";
+		boxDiv.point = map.boxes[i];
+		document.body.appendChild(boxDiv); 
+		updatePosition(boxDiv);
+		boxDiv.onclick = function() {
+			let p1Div = document.getElementById("p1");
+			p1Div.point = boxDiv.point;
+			updatePosition(p1Div);
+			updateDistance(map);
+			let p2Div = document.getElementById("p2");
+			highlightShockDistances(map, distanceOnTrack(map, p1Div.point, p2Div.point));
+		};
+	}
 }
