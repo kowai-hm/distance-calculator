@@ -27,6 +27,7 @@ function init(map = RACEWAY) {
 	drawMap(map);
 	createCursors(map);
 	connectDistanceField(map);
+	highlightShockDistances(map, CURSORS_INIT_GAP);
 }
 
 /**
@@ -463,7 +464,6 @@ function highlightShockDistances(map, gap) {
 			p = highlightDistance(map, p, dist - prevTraveled, reverse = true, color = SHOCK_DISTANCES[dist].color);
 			prevTraveled = dist;
 		} else {
-			console.log(dist);
 			highlightDistance(map, p, gap - prevTraveled, reverse = true, color = SHOCK_DISTANCES[dist].color);
 			return;
 		}
@@ -516,10 +516,11 @@ function highlightDistanceFromStart(map, dist) {
  * @param {Object} map A map.
  */
 function connectDistanceField(map) {
-	let p2 = document.getElementById('p2').point;
 	let p1Div = document.getElementById('p1');
+	let p2Div = document.getElementById('p2');
 	let distDiv = document.getElementById("dist");
 	distDiv.onchange = function() {
+		let p2 = p2Div.point;
 		let dist = parseFloat(distDiv.value);
 		let segment = travel(map, p2, dist, reverse = true);
 		p1Div.point = segment[segment.length - 1];
