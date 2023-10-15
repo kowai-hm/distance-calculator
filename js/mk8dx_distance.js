@@ -21,6 +21,21 @@ let untransform = null;
 let distance = (p1, p2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2) + Math.pow(p2.z - p1.z, 2));
 
 /**
+ * Setup the map selection list and gives it interaction properties..
+ */
+function setupMapSelection() {
+	let selectionDiv = document.getElementById("mapSelect");
+	for(let map in MAPS) {
+		let optionDiv = document.createElement("option");
+		optionDiv.value = optionDiv.text = map;
+		selectionDiv.appendChild(optionDiv);
+	}
+	selectionDiv.onchange = function() {
+		init(MAPS[selectionDiv.value]);
+	};
+}
+
+/**
  * Initialization function.
  */
 function init(map = RACEWAY) {
@@ -543,6 +558,12 @@ function connectDistanceField(map) {
  * @param {Object} map A map. 
  */
 function createItemBoxes(map) {
+	// Clean item boxes created beforehand
+	let boxes = document.getElementsByClassName('box');
+	for(let i = boxes.length - 1; i >= 0; i--) {
+		boxes[i].remove();
+	}
+	// Create new item boxes
 	for(let i = 0; i < map.boxes.length; i++) {
 		let boxDiv = document.createElement("div");
 		boxDiv.id = i;

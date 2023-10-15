@@ -2,47 +2,30 @@
 <html>
 <head>
   <title>MK8DX Distance Calculator</title>
+  <link rel="stylesheet" href="css/mk8dx_distance.css">
   <script src="js/values.js"></script>
   <script src="js/mk8dx_distance.js"></script>
-  <style>
-	canvas {
-		position: absolute; 
-		top: 0; 
-		left: 0;
-	}
-	#p1, #p2 {
-		position: absolute;
-		width: 16.25px;
-		height: 16.25px;
-		border-radius: 50%;
-		z-index: 99;
-	}
-	#p1 {background-color: grey;}
-	#p2 {background-color: gold;}
-	#distance {
-		float: right;
-	}
-	.box {
-		position: absolute;
-		width: 30px;
-		height: 30px;
-		background: url("assets/box.png");
-		background-size: contain;
-		background-repeat: no-repeat;
-	}
-  </style>
 </head>
 <body>
 	<canvas id="map"></canvas>
 	<canvas id="highlights"></canvas>
 	<div id="p1"></div>
 	<div id="p2"></div>
-	<div id="distance">
-		<label for="dist">Distance between 1st and other player :</label>
-		<input id="dist" name="dist" type="number" />
+	<div id="rightBox">
+		<label for="mapSelect">Map</label>
+		<select name="mapSelect" id="mapSelect"></select>
+		<div id="distance">
+			<label for="dist">Distance between 1st and other player :</label>
+			<input id="dist" name="dist" type="number" />
+		</div>
 	</div>
 	<script>
+		setupMapSelection();
 		init();
+		// Avoid "disallowed" icon to appear while dragging cursors
+		document.addEventListener("dragover", (event) => {
+			event.preventDefault();
+		});
 	</script>
 </body>
 </html>
