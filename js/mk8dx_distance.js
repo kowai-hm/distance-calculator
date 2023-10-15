@@ -38,7 +38,7 @@ function setupMapSelection() {
 /**
  * Initialization function.
  */
-function init(map = RACEWAY) {
+function init(map = MAPS[Object.keys(MAPS)[0]]) {
 	drawMap(map);
 	createCursors(map);
 	createItemBoxes(map);
@@ -170,11 +170,15 @@ function projectPoint(map, point, D3 = true) {
 
 	let minDistance = Number.MAX_SAFE_INTEGER;
 	let projectedPoint = null;
-	for(let i = 0; i < map.points.length-1; i++) {
-		let [projection, pointDistance] = D3 ? distancePointToSegment3D(point, map.points[i], map.points[i+1]) : distancePointToSegment2D(point, map.points[i], map.points[i+1]);
+	let points = structuredClone(map.points);
+	if(map.loop) {
+		points.push(points[0]);
+	}
+	for(let i = 0; i < points.length-1; i++) {
+		let [projection, pointDistance] = D3 ? distancePointToSegment3D(point, points[i], points[i+1]) : distancePointToSegment2D(point, points[i], points[i+1]);
 		if(pointDistance < minDistance) {
 			minDistance = pointDistance;
-			startPointIndex = i+1;
+			startPointIndex = (i+1) % map.points.length;
 			projectedPoint = projection;
 		}
 		// Point is already on the track
@@ -188,7 +192,7 @@ function projectPoint(map, point, D3 = true) {
 
 /**
  * Fix 2D projection to get proper 3D projection.
- * WARNING : only a partial solution as it can't properly handle overlaping sections.
+ * WARNING : only a partial solution as it can't properly handle overlapping sections and vertical segments.
  * 
  * @param {Object}            map A map.
  * @param {Object} malformedPoint The point to fix.
@@ -199,9 +203,17 @@ function projectPoint(map, point, D3 = true) {
 function fixProjection(map, malformedPoint, nextIndex) {
 	let start = map.points[nextIndex == 0 ? map.points.length-1 : nextIndex-1];
 	let end = map.points[nextIndex];
-	const t = (malformedPoint.x - start.x) / (end.x - start.x);
-	const interpolatedY = start.y + t * (end.y - start.y);
-	return { x: malformedPoint.x, y: interpolatedY, z: malformedPoint.z };
+	let translationVector = { x: end.x - start.x, y: end.y - start.y, z: end.z - start.z };
+	let factor;
+	if(translationVector.x != 0) {
+		factor = (malformedPoint.x - start.x) / translationVector.x;
+	} else if(translationVector.z != 0) {
+		factor = (malformedPoint.z - start.z) / translationVector.z;
+	} else { // Strictly vertical segment ; see figure for more details
+		return start;
+	}
+	let fixedPoint = { x: malformedPoint.x, y: start.y + factor * translationVector.y, z: malformedPoint.z };
+	return fixedPoint;
 }
 
 /**
@@ -269,27 +281,28 @@ function travel(map, origin, dist, reverse = false) {
 	}
 	if(reverse) {
 		startPointIndex = (startPointIndex - 1) % map.points.length;
+		if(startPointIndex == -1) {startPointIndex = map.points.length - 1;}
 	}
 
 	// Compute distance
-	let travelledDistance = distance(projectedPoint, map.points[startPointIndex]);
-	if(travelledDistance > dist) {
+	let traveledDistance = distance(projectedPoint, map.points[startPointIndex]);
+	if(traveledDistance > dist) {
 		segment.push(translate(projectedPoint, projectedPoint, map.points[startPointIndex], dist));
 		return segment;
 	}
 	for(let i = startPointIndex % map.points.length, j = (!reverse ? startPointIndex+1 : startPointIndex-1) % map.points.length; 
-			travelledDistance < dist; 
+			traveledDistance < dist; 
 			i = (!reverse ? i+1 : i-1) % map.points.length, j = (!reverse ? j+1 : j-1) % map.points.length) {
 		if(i == -1) {i = map.points.length - 1;}
 		if(j == -1) {j = map.points.length - 1;}
-		let potentiallyTravelledDistance = distance(map.points[i], map.points[j]);
-		if(travelledDistance + potentiallyTravelledDistance > dist) {
-			let remainingDistanceToTravel = dist - travelledDistance;
+		let potentiallyTraveledDistance = distance(map.points[i], map.points[j]);
+		if(traveledDistance + potentiallyTraveledDistance > dist) {
+			let remainingDistanceToTravel = dist - traveledDistance;
 			segment.push(translate(map.points[i], map.points[i], map.points[j], remainingDistanceToTravel));
-			travelledDistance += remainingDistanceToTravel;
+			traveledDistance += remainingDistanceToTravel;
 		} else {
 			segment.push(map.points[j]);
-			travelledDistance += potentiallyTravelledDistance;
+			traveledDistance += potentiallyTraveledDistance;
 		}
 	}
 
@@ -543,12 +556,11 @@ function connectDistanceField(map) {
 	let p2Div = document.getElementById('p2');
 	let distDiv = document.getElementById("dist");
 	distDiv.onchange = function() {
-		let p2 = p2Div.point;
 		let dist = parseFloat(distDiv.value);
-		let segment = travel(map, p2, dist, reverse = true);
-		p1Div.point = segment[segment.length - 1];
-		updatePosition(p1Div);
-		highlightShockDistances(map, distanceOnTrack(map, p1Div.point, p2));
+		let segment = travel(map, p1Div.point, dist);
+		p2Div.point = segment[segment.length - 1];
+		updatePosition(p2Div);
+		highlightShockDistances(map, dist);
 	};
 }
 
@@ -574,10 +586,15 @@ function createItemBoxes(map) {
 		boxDiv.onclick = function() {
 			let p1Div = document.getElementById("p1");
 			p1Div.point = boxDiv.point;
-			updatePosition(p1Div);
-			updateDistance(map);
 			let p2Div = document.getElementById("p2");
-			highlightShockDistances(map, distanceOnTrack(map, p1Div.point, p2Div.point));
+			// First distance at which shock is available with an higher rate in the items pool
+			let shockDistance = parseInt(Object.keys(SHOCK_DISTANCES)[1]);
+			let segment = travel(map, p1Div.point, shockDistance);
+			p2Div.point = segment[segment.length - 1];
+			updatePosition(p1Div);
+			updatePosition(p2Div);
+			updateDistance(map);
+			highlightShockDistances(map, shockDistance);
 		};
 	}
 }

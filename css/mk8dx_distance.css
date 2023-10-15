@@ -18,8 +18,8 @@ canvas {
 }
 .box {
     position: absolute;
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
     background: url("../assets/box.png");
     background-size: contain;
     background-repeat: no-repeat;
