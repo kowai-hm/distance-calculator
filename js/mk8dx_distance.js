@@ -36,6 +36,21 @@ function setupMapSelection() {
 }
 
 /**
+ * Setup video POV for each cursor, for a given map.
+ * 
+ * @param {Object} map A map.
+ */
+function setupVideo(map) {
+	let videoP1 = document.getElementById("video_p1");
+	let videoP2 = document.getElementById("video_p2");
+	let sourceP1 = document.getElementById("source_p1");
+	let sourceP2 = document.getElementById("source_p2");
+	videoP1.onloadedmetadata = function() {updateVideo(map, document.getElementById("p1"))};
+	videoP2.onloadedmetadata = function() {updateVideo(map, document.getElementById("p2"))};
+	sourceP1.src = sourceP2.src = `assets/${map.video}`;
+}
+
+/**
  * Initialization function.
  */
 function init(map = MAPS[Object.keys(MAPS)[0]]) {
@@ -44,6 +59,7 @@ function init(map = MAPS[Object.keys(MAPS)[0]]) {
 	createItemBoxes(map);
 	connectDistanceField(map);
 	highlightShockDistances(map, CURSORS_INIT_GAP);
+	setupVideo(map);
 }
 
 /**
@@ -290,6 +306,7 @@ function travel(map, origin, dist, reverse = false) {
 		segment.push(translate(projectedPoint, projectedPoint, map.points[startPointIndex], dist));
 		return segment;
 	}
+	segment.push(map.points[startPointIndex]);
 	for(let i = startPointIndex % map.points.length, j = (!reverse ? startPointIndex+1 : startPointIndex-1) % map.points.length; 
 			traveledDistance < dist; 
 			i = (!reverse ? i+1 : i-1) % map.points.length, j = (!reverse ? j+1 : j-1) % map.points.length) {
@@ -452,6 +469,7 @@ function createCursor(map, div, point) {
 			updatePosition(div);
 			let gap = updateDistance(map);
 			highlightShockDistances(map, gap);
+			updateVideo(map, div);
 		}
 	};
 }
@@ -521,7 +539,7 @@ function highlightDistance(map, origin, dist, reverse = false, color = 'red') {
 	let canvas = document.getElementById('highlights');
 	let context = canvas.getContext('2d');
 	context.strokeStyle = color;
-	context.lineWidth = 12;
+	context.lineWidth = 4;
 
 	context.beginPath();
 	let segment = travel(map, origin, dist, reverse);
@@ -561,6 +579,8 @@ function connectDistanceField(map) {
 		p2Div.point = segment[segment.length - 1];
 		updatePosition(p2Div);
 		highlightShockDistances(map, dist);
+		updateVideo(map, p1Div);
+		updateVideo(map, p2Div);
 	};
 }
 
@@ -595,6 +615,34 @@ function createItemBoxes(map) {
 			updatePosition(p2Div);
 			updateDistance(map);
 			highlightShockDistances(map, shockDistance);
+			updateVideo(map, p1Div);
+			updateVideo(map, p2Div);
 		};
+	}
+}
+
+/**
+ * Update video timestamp to reflect cursor's position.
+ * 
+ * @param {Object}          map A map.
+ * @param {HTMLDivElement} pDiv The HTML representation of the cursor.
+ */
+function updateVideo(map, pDiv) {
+	let p = pDiv.point;
+	let distFromStart = distanceOnTrack(map, map.points[0], p);
+	let prevTimestamp = 0;
+	for(let timestamp in map.keypoints) {
+		timestamp = parseFloat(timestamp);
+		let dist = map.keypoints[timestamp];
+		if(dist >= distFromStart) {
+			let segmentDuration = timestamp - prevTimestamp;
+			let prevDist = prevTimestamp == 0 ? 0 : map.keypoints[prevTimestamp];
+			let segmentSize = map.keypoints[timestamp] - prevDist;
+			let distInSegment = distFromStart - prevDist;
+			let video = document.getElementById(`video_${pDiv.id}`);
+			video.currentTime = prevTimestamp + segmentDuration * (distInSegment/segmentSize);
+			return;
+		}
+		prevTimestamp = timestamp;
 	}
 }
