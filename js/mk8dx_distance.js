@@ -48,6 +48,8 @@ function setupVideo(map) {
 	videoP1.onloadedmetadata = function() {updateVideo(map, document.getElementById("p1"))};
 	videoP2.onloadedmetadata = function() {updateVideo(map, document.getElementById("p2"))};
 	sourceP1.src = sourceP2.src = `assets/${map.video}`;
+	videoP1.load();
+	videoP2.load();
 }
 
 /**
