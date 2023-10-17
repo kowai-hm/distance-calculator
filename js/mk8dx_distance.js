@@ -462,7 +462,7 @@ function createCursor(map, div, point) {
 	div.point = point;
 	updatePosition(div);
 	div.ondragend = function(e) {
-		let mousePos = { x: e.clientX, y: 0, z: e.clientY }; // Dummy y as not relevant here
+		let mousePos = { x: e.clientX + window.scrollX, y: 0, z: e.clientY + window.scrollY }; // Dummy y
 		let unprojectedMousePos = untransform(mousePos);
 		let {projectedPoint, startPointIndex, dist} = projectPoint(map, unprojectedMousePos, D3 = false);
 		if(dist <= DRAG_MIN_DISTANCE) {
